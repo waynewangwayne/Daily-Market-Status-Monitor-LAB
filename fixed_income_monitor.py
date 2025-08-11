@@ -165,8 +165,8 @@ def create_plotly_chart(df, title, ylabel='Value'):
             paper_bgcolor='white'
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black')
         
         return fig
     except Exception as e:
@@ -243,8 +243,8 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
         fig.update_yaxes(title_text=left_ylabel, secondary_y=False)
         fig.update_yaxes(title_text=right_ylabel, secondary_y=True)
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', secondary_y=False)
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black', secondary_y=False)
         
         return fig
     except Exception as e:
@@ -286,8 +286,8 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
             paper_bgcolor='white'
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', tickformat='.0%')
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black', tickformat='.0%')
         
         return fig
     except Exception as e:
@@ -686,3 +686,4 @@ if __name__ == "__main__":
         st.write("Error details:", str(e))
         st.write("Full traceback:")
         st.code(traceback.format_exc())
+
