@@ -29,7 +29,7 @@ st.markdown("""
         max-width: 100%;
     }
     .stPlotlyChart {
-        background-color: white;
+        background-color: black;
     }
     .metric-container {
         background-color: #f0f2f6;
@@ -38,7 +38,7 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     .stMetric {
-        background-color: white;
+        background-color: black;
         padding: 0.5rem;
         border-radius: 0.25rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.12);
@@ -161,12 +161,12 @@ def create_plotly_chart(df, title, ylabel='Value'):
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(l=40, r=40, t=60, b=40),
             height=400,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
+            plot_bgcolor='black',
+            paper_bgcolor='black'
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black')
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
         
         return fig
     except Exception as e:
@@ -235,16 +235,16 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(l=40, r=40, t=60, b=40),
             height=400,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
+            plot_bgcolor='black',
+            paper_bgcolor='black'
         )
         
         # Set y-axes titles
         fig.update_yaxes(title_text=left_ylabel, secondary_y=False)
         fig.update_yaxes(title_text=right_ylabel, secondary_y=True)
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black', secondary_y=False)
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', secondary_y=False)
         
         return fig
     except Exception as e:
@@ -282,12 +282,12 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(l=40, r=40, t=60, b=40),
             height=400,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
+            plot_bgcolor='black',
+            paper_bgcolor='black'
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='black')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='black', tickformat='.0%')
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', tickformat='.0%')
         
         return fig
     except Exception as e:
@@ -686,4 +686,5 @@ if __name__ == "__main__":
         st.write("Error details:", str(e))
         st.write("Full traceback:")
         st.code(traceback.format_exc())
+
 
