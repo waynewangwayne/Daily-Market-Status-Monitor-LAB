@@ -4,3 +4,4 @@ pandas-datareader>=0.10.0
 yfinance>=0.2.0
 matplotlib>=3.6.0
 plotly>=5.17.0
+setuptools>=65.0.0
