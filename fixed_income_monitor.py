@@ -173,7 +173,83 @@ def create_plotly_chart(df, title, ylabel='Value'):
         st.error(f"Error creating chart for {title}: {str(e)}")
         return None
 
-def create_stacked_probability_chart(df, title):
+def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylabel):
+    """Create a dual-axis chart for comparing different scales."""
+    if left_data is None and right_data is None:
+        return None
+    
+    try:
+        from plotly.subplots import make_subplots
+        
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        colors_left = ['#1f77b4', '#ff7f0e']
+        colors_right = ['#2ca02c', '#d62728']
+        
+        # Add left axis data (Credit Spreads)
+        if left_data is not None:
+            if isinstance(left_data, pd.Series):
+                left_data = left_data.to_frame()
+            
+            for i, col in enumerate(left_data.columns):
+                clean_data = left_data[col].dropna()
+                if len(clean_data) > 0:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=clean_data.index,
+                            y=clean_data.values,
+                            mode='lines',
+                            name=str(col),
+                            line=dict(color=colors_left[i % len(colors_left)], width=2),
+                            yaxis='y',
+                        ),
+                        secondary_y=False
+                    )
+        
+        # Add right axis data (EM Performance)
+        if right_data is not None:
+            if isinstance(right_data, pd.Series):
+                right_data = right_data.to_frame()
+            
+            for i, col in enumerate(right_data.columns):
+                clean_data = right_data[col].dropna()
+                if len(clean_data) > 0:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=clean_data.index,
+                            y=clean_data.values,
+                            mode='lines',
+                            name=str(col),
+                            line=dict(color=colors_right[i % len(colors_right)], width=2),
+                            yaxis='y2',
+                        ),
+                        secondary_y=True
+                    )
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=16)),
+            xaxis_title="Date",
+            hovermode='x unified',
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=40, r=40, t=60, b=40),
+            height=400,
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        
+        # Set y-axes titles
+        fig.update_yaxes(title_text=left_ylabel, secondary_y=False)
+        fig.update_yaxes(title_text=right_ylabel, secondary_y=True)
+        
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', secondary_y=False)
+        
+        return fig
+    except Exception as e:
+        st.error(f"Error creating dual-axis chart: {str(e)}")
+        return None
     """Create stacked area chart for Fed rate probabilities."""
     if df is None or df.empty:
         return None
@@ -305,8 +381,7 @@ def main():
         show_rates = st.checkbox("Short Rates (SOFR/EFFR)", True)
         show_fed_prob = st.checkbox("Fed Rate Probabilities", True)
         show_repo = st.checkbox("Overnight Repo Rate", True)
-        show_embi = st.checkbox("EMBI Emerging Market Spreads", True)
-        show_vix = st.checkbox("VIX Volatility", True)
+        show_embi = st.checkbox("US Credit vs EM Stocks & Bonds", True)
         show_cpi = st.checkbox("CPI Inflation (YoY & MoM)", True)
         
         # Refresh button
@@ -404,20 +479,40 @@ def main():
             st.write("🔄 Fetching Overnight Repo Rate...")
             repo_data = fred_get('RRPONTSYD', start, end)  # Overnight Reverse Repo Rate
         
-        # 8) EMBI Emerging Market Bond Spread
-        embi_data = None
+        # 8) US Credit Spread vs EM Markets
+        em_credit_data = {}
         if show_embi:
-            st.write("🌍 Fetching EMBI Spreads...")
-            # Using a proxy for EMBI - JPMorgan Emerging Markets Bond Index
-            embi_data = fred_get('BAMLEMS', start, end)  # Emerging Markets Sovereign Spread
+            st.write("🌍 Fetching US Credit vs EM Market Data...")
+            # US High Yield Credit Spread
+            us_hy_spread = fred_get('BAMLH0A0HYM2', start, end)  # US High Yield Master II OAS
+            # EM Stock Index (using MSCI EM as proxy via Yahoo Finance)
+            try:
+                em_stocks = yf.download("EEM", start=start, end=end, progress=False, auto_adjust=False)
+                if em_stocks is not None and not em_stocks.empty:
+                    em_stocks_close = em_stocks['Close'].rename('EM Stocks (EEM)')
+                    # Normalize to percentage change from start for comparison
+                    em_stocks_norm = ((em_stocks_close / em_stocks_close.iloc[0]) - 1) * 100
+                    em_credit_data['EM Stocks % Change'] = em_stocks_norm
+                    st.success("✅ Loaded EM Stocks (EEM)")
+            except Exception as e:
+                st.warning(f"⚠️ Failed to fetch EM stocks: {str(e)}")
+            
+            # EM Bonds (using EMB ETF as proxy)
+            try:
+                em_bonds = yf.download("EMB", start=start, end=end, progress=False, auto_adjust=False)
+                if em_bonds is not None and not em_bonds.empty:
+                    em_bonds_close = em_bonds['Close'].rename('EM Bonds (EMB)')
+                    # Normalize to percentage change from start
+                    em_bonds_norm = ((em_bonds_close / em_bonds_close.iloc[0]) - 1) * 100
+                    em_credit_data['EM Bonds % Change'] = em_bonds_norm
+                    st.success("✅ Loaded EM Bonds (EMB)")
+            except Exception as e:
+                st.warning(f"⚠️ Failed to fetch EM bonds: {str(e)}")
+            
+            if us_hy_spread is not None:
+                em_credit_data['US HY Credit Spread'] = us_hy_spread
         
-        # 9) VIX
-        vix_series = None
-        if show_vix:
-            st.write("⚡ Fetching VIX Volatility...")
-            vix_series = get_vix_data(start, end)
-        
-        # 10) CPI Data - YoY and MoM
+        # 9) CPI Data - YoY and MoM
         cpi_data = {}
         if show_cpi:
             st.write("📊 Fetching CPI Data...")
@@ -456,8 +551,6 @@ def main():
         key_metrics['BBB Credit Spread'] = credit_df['BBB']
     if rates_data and 'SOFR' in rates_data:
         key_metrics['SOFR'] = rates_data['SOFR'].iloc[:, 0]
-    if vix_series is not None:
-        key_metrics['VIX'] = vix_series
     if cpi_data and 'CPI YoY' in cpi_data:
         key_metrics['CPI YoY'] = cpi_data['CPI YoY'].iloc[:, 0]
     
@@ -518,21 +611,42 @@ def main():
         if fig:
             st.plotly_chart(fig, use_container_width=True)
     
-    # 8. EMBI Spreads
-    if show_embi and embi_data is not None:
-        st.subheader("🌍 Emerging Market Bond Spreads")
-        fig = create_plotly_chart(embi_data, "EMBI Emerging Market Spreads", "Spread (bps)")
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
+    # 8. US Credit vs EM Markets
+    if show_embi and em_credit_data:
+        st.subheader("🌍 US Credit Spread vs Emerging Market Performance")
+        
+        # Separate credit spreads from EM performance data
+        credit_spread_data = None
+        em_performance_data = {}
+        
+        if 'US HY Credit Spread' in em_credit_data:
+            credit_spread_data = em_credit_data['US HY Credit Spread']
+        
+        if 'EM Stocks % Change' in em_credit_data:
+            em_performance_data['EM Stocks % Change'] = em_credit_data['EM Stocks % Change']
+        if 'EM Bonds % Change' in em_credit_data:
+            em_performance_data['EM Bonds % Change'] = em_credit_data['EM Bonds % Change']
+        
+        if em_performance_data:
+            em_perf_df = pd.concat(em_performance_data, axis=1)
+            fig = create_dual_axis_chart(
+                credit_spread_data, 
+                em_perf_df, 
+                "US Credit Risk vs Emerging Market Performance",
+                "Credit Spread (bps)",
+                "EM Performance (% Change)"
+            )
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+                st.info("💡 **Chart Logic**: When US credit spreads widen (higher risk), EM assets often underperform (negative correlation)")
+        else:
+            # Fallback to single chart if EM data unavailable
+            if credit_spread_data is not None:
+                fig = create_plotly_chart(credit_spread_data, "US High Yield Credit Spread", "Spread (bps)")
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
     
-    # 9. VIX
-    if show_vix and vix_series is not None:
-        st.subheader("⚡ Market Volatility (VIX)")
-        fig = create_plotly_chart(vix_series, "VIX - Implied Volatility Index", "VIX Level")
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # 10. CPI Data
+    # 9. CPI Data
     if show_cpi and cpi_data:
         st.subheader("📊 Consumer Price Index (CPI)")
         
@@ -561,7 +675,7 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown("**📊 Data Sources:**")
-    st.markdown("*• FRED (Federal Reserve Economic Data) • Yahoo Finance • CME Group • Policy Uncertainty*")
+    st.markdown("*• FRED (Federal Reserve Economic Data) • Yahoo Finance (EEM, EMB ETFs) • CME Group • Policy Uncertainty*")
     st.markdown(f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*")
 
 if __name__ == "__main__":
