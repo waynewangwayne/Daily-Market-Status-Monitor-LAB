@@ -26,7 +26,7 @@ st.markdown("""
     /* Main dark theme */
     .stApp {
         background-color: #0e1117;
-        color: #ffffff;
+        color: white;
     }
     
     /* Sidebar dark theme */
@@ -734,3 +734,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
