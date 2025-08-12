@@ -26,6 +26,7 @@ def display_key_metrics(data_dict):
             i += 1
 
 # --- Replace BBB Credit Spread metric with CCC Credit Spread ---
+credit_df = get_credit_spread_data()  # 確保 credit_df 已被定義
 if not credit_df.empty and 'CCC' in credit_df.columns:
     key_metrics['CCC Credit Spread'] = credit_df['CCC']
 
@@ -67,3 +68,4 @@ if show_cpi and cpi_data:
         fig = create_plotly_chart(mom_df, 'CPI Month-over-Month', 'MoM Change (%)', line_width=2)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
+
