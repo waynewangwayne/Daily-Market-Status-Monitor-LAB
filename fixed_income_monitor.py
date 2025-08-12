@@ -12,7 +12,7 @@ import requests
 import json
 warnings.filterwarnings('ignore')
 
-# Page config for mobile-friendly layout with dark theme
+# --- Page config ---
 st.set_page_config(
     page_title="Fixed Income Monitor",
     page_icon="📊",
@@ -20,673 +20,458 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Dark mode CSS styling
+# --- Dark mode CSS styling (Streamlit class names may change; this is best-effort) ---
 st.markdown("""
 <style>
-    /* Main dark theme */
     .stApp {
         background-color: #0e1117;
         color: #ffffff;
     }
-    
-    /* Sidebar dark theme */
-    .css-1d391kg {
-        background-color: #262730;
-    }
-    
-    /* Main content area */
-    .main .block-container {
+    .block-container {
         background-color: #0e1117;
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-        max-width: 100%;
         color: #ffffff;
     }
-    
-    /* Charts background */
+    .css-1d391kg, .css-1offfwp { /* sidebar common classes */
+        background-color: #262730 !important;
+        color: #ffffff !important;
+    }
     .stPlotlyChart {
         background-color: #0e1117;
     }
-    
-    /* Metrics styling */
-    .metric-container {
-        background-color: #262730;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-        border: 1px solid #4a4a4a;
-    }
-    
-    .stMetric {
-        background-color: #262730;
-        padding: 0.5rem;
-        border-radius: 0.25rem;
-        box-shadow: 0 1px 3px rgba(255,255,255,0.1);
+    .stMetric, .streamlit-expanderHeader, .stButton {
         color: #ffffff;
     }
-    
-    /* Text colors */
-    .stMarkdown, .stText, h1, h2, h3, p {
+    h1, h2, h3, p, div, label {
         color: #ffffff !important;
-    }
-    
-    /* Success/Error messages */
-    .stSuccess {
-        background-color: #1e4d3d;
-        color: #ffffff;
-    }
-    
-    .stError {
-        background-color: #4d1e1e;
-        color: #ffffff;
-    }
-    
-    .stWarning {
-        background-color: #4d3d1e;
-        color: #ffffff;
-    }
-    
-    .stInfo {
-        background-color: #1e3d4d;
-        color: #ffffff;
-    }
-    
-    /* Input widgets */
-    .stSelectbox, .stCheckbox, .stDateInput {
-        color: #ffffff;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: #262730;
-        color: #ffffff;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Helper functions with automatic daily refresh
-@st.cache_data(ttl=86400, show_spinner=False)  # Cache for 24 hours (daily refresh)
+# --- Utilities ---
+@st.cache_data(ttl=86400, show_spinner=False)
 def fred_get(series_id, start, end):
-    """Safe fetch from FRED with daily caching and detailed error handling."""
+    """Fetch series from FRED and return a cleaned pandas Series indexed by datetime.
+    Cached for 24 hours to satisfy the "update daily" requirement.
+    """
     try:
         df = web.DataReader(series_id, 'fred', start, end)
-        if df is not None and not df.empty:
-            st.success(f"✅ Loaded {series_id}: {len(df)} records")
-            return df
-        else:
-            st.warning(f"⚠️ {series_id}: No data returned")
+        if df is None or df.empty:
             return None
+        # Ensure single Series output
+        s = df.iloc[:, 0].rename(series_id)
+        # Convert index to DatetimeIndex and sort
+        s.index = pd.to_datetime(s.index)
+        s = s.sort_index()
+        return s
     except Exception as e:
-        st.error(f"❌ Failed to fetch {series_id}: {str(e)}")
+        st.error(f"Failed to fetch FRED {series_id}: {e}")
         return None
 
-@st.cache_data(ttl=86400, show_spinner=False)  # Daily refresh
-def get_yahoo_data(ticker, start, end, name):
-    """Fetch Yahoo Finance data with proper error handling."""
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_yahoo_data(ticker, start, end, name=None):
+    """Download data from Yahoo Finance and return Close price as pandas Series.
+    Cached for 24 hours.
+    """
     try:
+        # Use yfinance directly
         data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
-        if data is not None and not data.empty and 'Close' in data.columns:
-            close_data = data['Close']
-            st.success(f"✅ Loaded {name} ({ticker}): {len(close_data)} records")
-            return close_data
-        else:
-            st.warning(f"⚠️ {name} ({ticker}): No data returned")
+        if data is None or data.empty:
             return None
+        if 'Close' not in data.columns:
+            return None
+        s = data['Close'].rename(name or ticker)
+        s.index = pd.to_datetime(s.index)
+        s = s.sort_index()
+        return s
     except Exception as e:
-        st.error(f"❌ Failed to fetch {name} ({ticker}): {str(e)}")
+        st.error(f"Failed to fetch {ticker} from Yahoo: {e}")
         return None
+
+
+def align_and_fill(series, start, end, freq='D'):
+    """Reindex series to a fixed frequency between start and end and forward-fill.
+    This ensures all charts use the exact same date range (2019-01-01 to latest).
+    """
+    if series is None:
+        return None
+    try:
+        idx = pd.date_range(start=start, end=end, freq=freq)
+        s = series.reindex(idx)
+        # Forward fill then backward fill for leading NaNs
+        s = s.fillna(method='ffill').fillna(method='bfill')
+        return s
+    except Exception as e:
+        st.error(f"align_and_fill error: {e}")
+        return series
+
 
 def create_plotly_chart(df, title, ylabel='Value'):
-    """Create mobile-friendly Plotly chart with dark theme."""
+    """Create a Plotly chart; accept Series or DataFrame. Uses dark theme colors.
+    """
     if df is None:
-        st.warning(f"No data available for {title}")
+        st.warning(f"No data for {title}")
         return None
-        
-    if isinstance(df, pd.DataFrame) and df.empty:
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
+    if df.empty:
         st.warning(f"Empty dataset for {title}")
         return None
-    
+
     try:
         fig = go.Figure()
-        
-        # Handle Series vs DataFrame
-        if isinstance(df, pd.Series):
-            df = df.to_frame()
-        
-        colors = ['#00d4ff', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', 
-                  '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3']
-        
+        colors = ['#00d4ff', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3']
+
         for i, col in enumerate(df.columns):
-            # Skip NaN values
-            clean_data = df[col].dropna()
-            if len(clean_data) > 0:
-                fig.add_trace(go.Scatter(
-                    x=clean_data.index,
-                    y=clean_data.values,
-                    mode='lines',
-                    name=str(col),
-                    line=dict(color=colors[i % len(colors)], width=2.5),
-                    hovertemplate=f'<b>{col}</b><br>Date: %{{x}}<br>Value: %{{y:.3f}}<extra></extra>'
-                ))
-                
-                # Add latest value annotation
-                if len(clean_data) > 0:
-                    latest_val = clean_data.iloc[-1]
-                    latest_date = clean_data.index[-1]
-                    fig.add_annotation(
-                        x=latest_date,
-                        y=latest_val,
-                        text=f'{latest_val:.2f}',
-                        showarrow=True,
-                        arrowhead=2,
-                        arrowsize=1,
-                        arrowwidth=1,
-                        arrowcolor=colors[i % len(colors)],
-                        font=dict(size=11, color=colors[i % len(colors)]),
-                        bgcolor="rgba(0,0,0,0.8)",
-                        bordercolor=colors[i % len(colors)],
-                        borderwidth=1
-                    )
-        
+            series = df[col].dropna()
+            if series.empty:
+                continue
+            fig.add_trace(go.Scatter(
+                x=series.index,
+                y=series.values,
+                mode='lines',
+                name=str(col),
+                line=dict(color=colors[i % len(colors)], width=2.5),
+                hovertemplate=f'<b>{col}</b><br>Date: %{{x}}<br>Value: %{{y:.4f}}<extra></extra>'
+            ))
+            # latest annotation
+            latest_val = series.iloc[-1]
+            latest_date = series.index[-1]
+            fig.add_annotation(x=latest_date, y=latest_val, text=f"{latest_val:.2f}", showarrow=True,
+                               arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=colors[i % len(colors)],
+                               font=dict(size=11, color=colors[i % len(colors)]), bgcolor='rgba(0,0,0,0.7)')
+
         fig.update_layout(
             title=dict(text=title, font=dict(size=18, color='white')),
-            xaxis_title="Date",
-            yaxis_title=ylabel,
-            hovermode='x unified',
-            showlegend=True,
-            legend=dict(
-                orientation="h", 
-                yanchor="bottom", 
-                y=1.02, 
-                xanchor="right", 
-                x=1,
-                font=dict(color='white')
-            ),
-            margin=dict(l=50, r=50, t=70, b=50),
-            height=450,
-            plot_bgcolor='#0e1117',
-            paper_bgcolor='#0e1117',
-            font=dict(color='white'),
-            xaxis=dict(
-                gridcolor='#2d2d2d',
-                color='white',
-                tickfont=dict(color='white')
-            ),
-            yaxis=dict(
-                gridcolor='#2d2d2d',
-                color='white',
-                tickfont=dict(color='white')
-            )
+            xaxis_title='Date', yaxis_title=ylabel,
+            hovermode='x unified', showlegend=True,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(color='white')),
+            margin=dict(l=50, r=50, t=70, b=50), height=450,
+            plot_bgcolor='#0e1117', paper_bgcolor='#0e1117', font=dict(color='white')
         )
-        
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#2d2d2d')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2d2d2d')
-        
+        fig.update_xaxes(gridcolor='#2d2d2d', color='white')
+        fig.update_yaxes(gridcolor='#2d2d2d', color='white')
         return fig
     except Exception as e:
-        st.error(f"Error creating chart for {title}: {str(e)}")
+        st.error(f"Error creating plotly chart {title}: {e}")
         return None
 
+
 def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylabel):
-    """Create a dual-axis chart for comparing different scales with dark theme."""
     if left_data is None and right_data is None:
         return None
-    
     try:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
-        
         colors_left = ['#00d4ff', '#ff6b6b']
         colors_right = ['#4ecdc4', '#feca57']
-        
-        # Add left axis data (Credit Spreads)
+
         if left_data is not None:
             if isinstance(left_data, pd.Series):
                 left_data = left_data.to_frame()
-            
             for i, col in enumerate(left_data.columns):
-                clean_data = left_data[col].dropna()
-                if len(clean_data) > 0:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=clean_data.index,
-                            y=clean_data.values,
-                            mode='lines',
-                            name=str(col),
-                            line=dict(color=colors_left[i % len(colors_left)], width=2.5),
-                            yaxis='y',
-                        ),
-                        secondary_y=False
-                    )
-        
-        # Add right axis data (EM Performance)
+                s = left_data[col].dropna()
+                if s.empty:
+                    continue
+                fig.add_trace(go.Scatter(x=s.index, y=s.values, mode='lines', name=str(col),
+                                         line=dict(color=colors_left[i % len(colors_left)], width=2.5)), secondary_y=False)
         if right_data is not None:
             if isinstance(right_data, pd.Series):
                 right_data = right_data.to_frame()
-            
             for i, col in enumerate(right_data.columns):
-                clean_data = right_data[col].dropna()
-                if len(clean_data) > 0:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=clean_data.index,
-                            y=clean_data.values,
-                            mode='lines',
-                            name=str(col),
-                            line=dict(color=colors_right[i % len(colors_right)], width=2.5),
-                            yaxis='y2',
-                        ),
-                        secondary_y=True
-                    )
-        
-        # Update layout with dark theme
-        fig.update_layout(
-            title=dict(text=title, font=dict(size=18, color='white')),
-            xaxis_title="Date",
-            hovermode='x unified',
-            showlegend=True,
-            legend=dict(
-                orientation="h", 
-                yanchor="bottom", 
-                y=1.02, 
-                xanchor="right", 
-                x=1,
-                font=dict(color='white')
-            ),
-            margin=dict(l=50, r=50, t=70, b=50),
-            height=450,
-            plot_bgcolor='#0e1117',
-            paper_bgcolor='#0e1117',
-            font=dict(color='white')
-        )
-        
-        # Set y-axes titles
-        fig.update_yaxes(
-            title_text=left_ylabel, 
-            secondary_y=False,
-            gridcolor='#2d2d2d',
-            color='white',
-            tickfont=dict(color='white')
-        )
-        fig.update_yaxes(
-            title_text=right_ylabel, 
-            secondary_y=True,
-            color='white',
-            tickfont=dict(color='white')
-        )
-        
-        fig.update_xaxes(
-            showgrid=True, 
-            gridwidth=1, 
-            gridcolor='#2d2d2d',
-            color='white',
-            tickfont=dict(color='white')
-        )
-        
+                s = right_data[col].dropna()
+                if s.empty:
+                    continue
+                fig.add_trace(go.Scatter(x=s.index, y=s.values, mode='lines', name=str(col),
+                                         line=dict(color=colors_right[i % len(colors_right)], width=2.5)), secondary_y=True)
+
+        fig.update_layout(title=dict(text=title, font=dict(size=18, color='white')),
+                          xaxis_title='Date', hovermode='x unified', showlegend=True,
+                          margin=dict(l=50, r=50, t=70, b=50), height=450,
+                          plot_bgcolor='#0e1117', paper_bgcolor='#0e1117', font=dict(color='white'))
+        fig.update_yaxes(title_text=left_ylabel, secondary_y=False, gridcolor='#2d2d2d', color='white')
+        fig.update_yaxes(title_text=right_ylabel, secondary_y=True, color='white')
+        fig.update_xaxes(gridcolor='#2d2d2d', color='white')
         return fig
     except Exception as e:
-        st.error(f"Error creating dual-axis chart: {str(e)}")
+        st.error(f"Error creating dual-axis chart: {e}")
         return None
 
-def display_key_metrics(data_dict):
-    """Display key metrics in a mobile-friendly dark format."""
-    if not data_dict:
-        st.warning("No key metrics available")
-        return
-        
-    st.subheader("📊 Key Metrics (Latest Values)")
-    
-    # Create more columns for more metrics
-    cols = st.columns(3)
-    col_idx = 0
-    
-    for name, df in data_dict.items():
-        if df is not None and not df.empty:
-            try:
-                with cols[col_idx % 3]:
-                    if isinstance(df, pd.Series):
-                        clean_data = df.dropna()
-                        if len(clean_data) > 0:
-                            latest_val = clean_data.iloc[-1]
-                            latest_date = clean_data.index[-1]
-                        else:
-                            latest_val = 0
-                            latest_date = 'N/A'
-                    elif isinstance(df, pd.DataFrame):
-                        # Take first column for multi-column DataFrames
-                        col_name = df.columns[0]
-                        clean_data = df[col_name].dropna()
-                        if len(clean_data) > 0:
-                            latest_val = clean_data.iloc[-1]
-                            latest_date = clean_data.index[-1]
-                        else:
-                            latest_val = 0
-                            latest_date = 'N/A'
-                    
-                    # Format date
-                    if latest_date != 'N/A':
-                        date_str = latest_date.strftime('%Y-%m-%d')
-                    else:
-                        date_str = 'N/A'
-                    
-                    # Format value based on metric type
-                    if 'Spread' in name or 'Rate' in name or 'Yield' in name:
-                        value_str = f"{latest_val:.2f}%"
-                    elif 'CPI' in name and 'YoY' in name:
-                        value_str = f"{latest_val:.1f}%"
-                    elif 'Index' in name:
-                        value_str = f"{latest_val:.0f}"
-                    else:
-                        value_str = f"{latest_val:.2f}"
-                    
-                    st.metric(
-                        label=name,
-                        value=value_str,
-                        help=f"Latest: {date_str}"
-                    )
-                    col_idx += 1
-            except Exception as e:
-                st.error(f"Error displaying metric {name}: {str(e)}")
 
-# Main app
+def display_key_metrics(data_dict):
+    if not data_dict:
+        st.warning('No key metrics available')
+        return
+    st.subheader('📊 Key Metrics (Latest Values)')
+    cols = st.columns(3)
+    i = 0
+    for name, series in data_dict.items():
+        if series is None or series.empty:
+            continue
+        try:
+            s = series.dropna()
+            if s.empty:
+                continue
+            latest_val = s.iloc[-1]
+            latest_date = s.index[-1]
+            date_str = latest_date.strftime('%Y-%m-%d')
+            # Formatting heuristics
+            if 'Spread' in name or 'Yield' in name or 'Rate' in name:
+                value_str = f"{latest_val:.2f}%"
+            elif 'Index' in name or 'EPU' in name or 'Policy' in name:
+                value_str = f"{latest_val:.0f}"
+            else:
+                value_str = f"{latest_val:.2f}"
+            with cols[i % 3]:
+                st.metric(label=name, value=value_str, help=f"Latest: {date_str}")
+            i += 1
+        except Exception as e:
+            st.error(f"Metric error {name}: {e}")
+
+
+# --- Main app ---
+
 def main():
     st.title("📈 Comprehensive Fixed Income Monitor")
-    st.markdown("*Mobile-optimized dark theme market monitoring dashboard*")
-    
-    # Fixed date range: 2019-01-01 to latest
+    st.markdown("*Mobile-optimized dark theme market monitoring dashboard — data from 2019-01-01 to latest (auto-updates daily)*")
+
+    # Fixed date range
     start = datetime(2019, 1, 1)
     end = datetime.now()
-    
-    # Display date range info
-    st.info(f"📅 **Data Range**: {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} (Auto-updated daily)")
-    
-    # Sidebar for settings
+
+    st.info(f"📅 Data Range: {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} (Auto-updated daily)")
+
+    # Sidebar
     with st.sidebar:
-        st.header("⚙️ Settings")
-        st.write(f"📅 **Fixed Date Range**")
+        st.header('⚙️ Settings')
         st.write(f"Start: {start.strftime('%Y-%m-%d')}")
         st.write(f"End: {end.strftime('%Y-%m-%d')}")
-        st.write("🔄 **Auto-refresh**: Daily")
-        
-        # Chart selection
-        st.header("📊 Charts to Display")
-        show_policy = st.checkbox("Economic Policy Uncertainty", True)
-        show_treasury = st.checkbox("Treasury Yield Curve", True)
-        show_spreads = st.checkbox("Treasury Spreads", True) 
-        show_credit = st.checkbox("Credit Spreads", True)
-        show_rates = st.checkbox("Short Rates (SOFR/EFFR)", True)
-        show_repo = st.checkbox("Overnight Repo Rate", True)
-        show_embi = st.checkbox("US Credit vs EM Stocks & Bonds", True)
-        show_cpi = st.checkbox("CPI Inflation (YoY & MoM)", True)
-        
-        # Manual refresh button
-        if st.button("🔄 Force Refresh All Data"):
-            st.cache_data.clear()
-            st.rerun()
-    
-    # Data loading with progress
-    with st.spinner('🔄 Loading comprehensive market data...'):
-        
+        st.write('Auto-refresh: Daily (cached for 24h)')
+        show_policy = st.checkbox('Economic Policy Uncertainty', True)
+        show_treasury = st.checkbox('Treasury Yield Curve', True)
+        show_spreads = st.checkbox('Treasury Spreads', True)
+        show_credit = st.checkbox('Credit Spreads', True)
+        show_rates = st.checkbox('Short Rates (SOFR/EFFR)', True)
+        show_repo = st.checkbox('Overnight Repo Rate', True)
+        show_embi = st.checkbox('US Credit vs EM Stocks & Bonds', True)
+        show_cpi = st.checkbox('CPI Inflation (YoY & MoM)', True)
+
+        if st.button('🔄 Force Refresh All Data'):
+            # Attempt to clear caches used above
+            try:
+                st.cache_data.clear()
+            except Exception:
+                try:
+                    st.experimental_memo_clear()
+                except Exception:
+                    pass
+            st.experimental_rerun()
+
+    # --- Data loading ---
+    with st.spinner('🔄 Loading data...'):
         # 1) Economic Policy Uncertainty
-        epu = None
-        if show_policy:
-            st.write("📈 Fetching Economic Policy Uncertainty...")
-            epu = fred_get('USEPUINDXD', start, end)
-        
-        # 2) Treasury yields - Extended curve
+        epu = fred_get('USEPUINDXD', start, end) if show_policy else None
+        if epu is not None:
+            epu = align_and_fill(epu, start, end)
+
+        # 2) Treasury yields
         treasury_df = pd.DataFrame()
         if show_treasury:
-            st.write("📊 Fetching Treasury Yield Curve...")
-            dgs_ids = {
-                'DGS1MO': '1M',
-                'DGS3MO': '3M', 
-                'DGS6MO': '6M',
-                'DGS1': '1Y',
-                'DGS2': '2Y',
-                'DGS5': '5Y',
-                'DGS10': '10Y',
-                'DGS30': '30Y'
-            }
-            treasury_parts = {}
+            dgs_ids = {'DGS1MO': '1M','DGS3MO': '3M','DGS6MO': '6M','DGS1': '1Y','DGS2': '2Y','DGS5': '5Y','DGS10': '10Y','DGS30': '30Y'}
+            parts = {}
             for sid, label in dgs_ids.items():
-                df = fred_get(sid, start, end)
-                if df is not None and not df.empty:
-                    df = df.rename(columns={sid: label})
-                    treasury_parts[label] = df[label]
-            
-            if treasury_parts:
-                treasury_df = pd.concat(treasury_parts, axis=1).sort_index()
-        
+                s = fred_get(sid, start, end)
+                if s is not None:
+                    s = align_and_fill(s, start, end)
+                    s.name = label
+                    parts[label] = s
+            if parts:
+                treasury_df = pd.concat(parts.values(), axis=1)
+                treasury_df.columns = list(parts.keys())
+
         # 3) Treasury spreads
         spreads_data = {}
         if show_spreads and not treasury_df.empty:
-            st.write("📏 Computing Treasury Spreads...")
             try:
                 if '10Y' in treasury_df.columns and '2Y' in treasury_df.columns:
-                    spread = (treasury_df['10Y'] - treasury_df['2Y']).to_frame(name='10Y-2Y')
-                    spreads_data['10Y-2Y Spread'] = spread
+                    spreads_data['10Y-2Y Spread'] = (treasury_df['10Y'] - treasury_df['2Y'])
                 if '10Y' in treasury_df.columns and '3M' in treasury_df.columns:
-                    spread = (treasury_df['10Y'] - treasury_df['3M']).to_frame(name='10Y-3M')
-                    spreads_data['10Y-3M Spread'] = spread
+                    spreads_data['10Y-3M Spread'] = (treasury_df['10Y'] - treasury_df['3M'])
                 if '30Y' in treasury_df.columns and '5Y' in treasury_df.columns:
-                    spread = (treasury_df['30Y'] - treasury_df['5Y']).to_frame(name='30Y-5Y')
-                    spreads_data['30Y-5Y Spread'] = spread
+                    spreads_data['30Y-5Y Spread'] = (treasury_df['30Y'] - treasury_df['5Y'])
             except Exception as e:
-                st.error(f"❌ Error computing spreads: {str(e)}")
-        
+                st.error(f"Error computing spreads: {e}")
+
         # 4) Credit spreads
         credit_df = pd.DataFrame()
         if show_credit:
-            st.write("🏦 Fetching Credit Spreads...")
-            credit_series = {}
-            credit_ids = {
-                'BAMLC0A1CAAA': 'AAA',     # AAA Option-Adjusted Spread
-                'BAMLC0A4CBBB': 'BBB',     # BBB Option-Adjusted Spread  
-                'BAMLH0A3HYC': 'CCC'       # CCC High Yield Option-Adjusted Spread
-            }
+            credit_ids = {'BAMLC0A1CAAA': 'AAA','BAMLC0A4CBBB': 'BBB','BAMLH0A3HYC': 'CCC'}
+            cs = {}
             for sid, label in credit_ids.items():
-                df = fred_get(sid, start, end)
-                if df is not None and not df.empty:
-                    credit_series[label] = df.iloc[:, 0]
-            if credit_series:
-                credit_df = pd.concat(credit_series, axis=1)
-        
+                s = fred_get(sid, start, end)
+                if s is not None:
+                    s = align_and_fill(s, start, end)
+                    s.name = label
+                    cs[label] = s
+            if cs:
+                credit_df = pd.concat(cs.values(), axis=1)
+                credit_df.columns = list(cs.keys())
+
         # 5) Short rates
         rates_data = {}
         if show_rates:
-            st.write("💰 Fetching Short-term Rates...")
             sofr = fred_get('SOFR', start, end)
             effr = fred_get('EFFR', start, end)
             if sofr is not None:
-                rates_data['SOFR'] = sofr
+                rates_data['SOFR'] = align_and_fill(sofr, start, end)
             if effr is not None:
-                rates_data['EFFR'] = effr
-        
-        # 6) Overnight Repo Rate
-        repo_data = None
-        if show_repo:
-            st.write("🔄 Fetching Overnight Repo Rate...")
-            repo_data = fred_get('RRPONTSYD', start, end)
-        
-        # 7) US Credit Spread vs EM Markets - Fixed implementation
+                rates_data['EFFR'] = align_and_fill(effr, start, end)
+
+        # 6) Overnight repo
+        repo_data = fred_get('RRPONTSYD', start, end) if show_repo else None
+        if repo_data is not None:
+            repo_data = align_and_fill(repo_data, start, end)
+
+        # 7) US Credit vs EM Markets
         em_credit_data = {}
         if show_embi:
-            st.write("🌍 Fetching US Credit vs EM Market Data...")
-            
-            # US High Yield Credit Spread
             us_hy_spread = fred_get('BAMLH0A0HYM2', start, end)
             if us_hy_spread is not None:
-                em_credit_data['US HY Credit Spread'] = us_hy_spread
-            
-            # EM Stock Index (EEM ETF)
-            em_stocks_data = get_yahoo_data("EEM", start, end, "EM Stocks")
-            if em_stocks_data is not None:
-                # Normalize to percentage change from start
-                em_stocks_norm = ((em_stocks_data / em_stocks_data.iloc[0]) - 1) * 100
-                em_credit_data['EM Stocks % Change'] = em_stocks_norm
-            
-            # EM Bonds (EMB ETF)
-            em_bonds_data = get_yahoo_data("EMB", start, end, "EM Bonds")
-            if em_bonds_data is not None:
-                # Normalize to percentage change from start
-                em_bonds_norm = ((em_bonds_data / em_bonds_data.iloc[0]) - 1) * 100
-                em_credit_data['EM Bonds % Change'] = em_bonds_norm
-        
-        # 8) CPI Data
+                em_credit_data['US HY Credit Spread'] = align_and_fill(us_hy_spread, start, end)
+            # EM Stocks and Bonds
+            em_stocks = get_yahoo_data('EEM', start, end, 'EEM')
+            em_bonds = get_yahoo_data('EMB', start, end, 'EMB')
+            # Defensive checks to avoid 'str' object is not callable or other type issues
+            if em_stocks is not None and isinstance(em_stocks, pd.Series):
+                em_stocks = align_and_fill(em_stocks, start, end)
+                try:
+                    em_stocks_norm = (em_stocks / em_stocks.iloc[0] - 1) * 100
+                    em_credit_data['EM Stocks % Change'] = em_stocks_norm
+                except Exception as e:
+                    st.error(f"Error normalizing EM Stocks: {e}")
+            if em_bonds is not None and isinstance(em_bonds, pd.Series):
+                em_bonds = align_and_fill(em_bonds, start, end)
+                try:
+                    em_bonds_norm = (em_bonds / em_bonds.iloc[0] - 1) * 100
+                    em_credit_data['EM Bonds % Change'] = em_bonds_norm
+                except Exception as e:
+                    st.error(f"Error normalizing EM Bonds: {e}")
+
+        # 8) CPI
         cpi_data = {}
         if show_cpi:
-            st.write("📊 Fetching CPI Data...")
-            
-            # CPI All Urban Consumers
             cpi_all = fred_get('CPIAUCSL', start, end)
-            # Core CPI (less food and energy)
             cpi_core = fred_get('CPILFESL', start, end)
-            
-            if cpi_all is not None and not cpi_all.empty:
-                # Calculate YoY and MoM for CPI
-                cpi_yoy = cpi_all.pct_change(periods=12) * 100
-                cpi_mom = cpi_all.pct_change(periods=1) * 100
-                cpi_data['CPI YoY'] = cpi_yoy.rename(columns={'CPIAUCSL': 'CPI YoY'})
-                cpi_data['CPI MoM'] = cpi_mom.rename(columns={'CPIAUCSL': 'CPI MoM'})
-            
-            if cpi_core is not None and not cpi_core.empty:
-                # Calculate YoY and MoM for Core CPI
-                core_yoy = cpi_core.pct_change(periods=12) * 100
-                core_mom = cpi_core.pct_change(periods=1) * 100
-                cpi_data['Core CPI YoY'] = core_yoy.rename(columns={'CPILFESL': 'Core CPI YoY'})
-                cpi_data['Core CPI MoM'] = core_mom.rename(columns={'CPILFESL': 'Core CPI MoM'})
-    
-    st.success("🎉 Data loading completed!")
-    
-    # Display key metrics
+            if cpi_all is not None:
+                cpi_all = align_and_fill(cpi_all, start, end)
+                cpi_yoy = cpi_all.pct_change(12) * 100
+                cpi_mom = cpi_all.pct_change(1) * 100
+                cpi_data['CPI YoY'] = cpi_yoy.rename('CPI YoY')
+                cpi_data['CPI MoM'] = cpi_mom.rename('CPI MoM')
+            if cpi_core is not None:
+                cpi_core = align_and_fill(cpi_core, start, end)
+                core_yoy = cpi_core.pct_change(12) * 100
+                core_mom = cpi_core.pct_change(1) * 100
+                cpi_data['Core CPI YoY'] = core_yoy.rename('Core CPI YoY')
+                cpi_data['Core CPI MoM'] = core_mom.rename('Core CPI MoM')
+
+    st.success('🎉 Data loading completed!')
+
+    # --- Key metrics ---
     key_metrics = {}
-    
-    if epu is not None and not epu.empty:
-        key_metrics['Policy Uncertainty'] = epu.iloc[:, 0]
+    if epu is not None:
+        key_metrics['Policy Uncertainty'] = epu
     if not treasury_df.empty and '10Y' in treasury_df.columns:
         key_metrics['10Y Treasury'] = treasury_df['10Y']
     if spreads_data and '10Y-2Y Spread' in spreads_data:
-        key_metrics['10Y-2Y Spread'] = spreads_data['10Y-2Y Spread'].iloc[:, 0]
+        key_metrics['10Y-2Y Spread'] = spreads_data['10Y-2Y Spread']
     if not credit_df.empty and 'BBB' in credit_df.columns:
         key_metrics['BBB Credit Spread'] = credit_df['BBB']
-    if rates_data and 'SOFR' in rates_data:
-        key_metrics['SOFR'] = rates_data['SOFR'].iloc[:, 0]
-    if cpi_data and 'CPI YoY' in cpi_data:
-        key_metrics['CPI YoY'] = cpi_data['CPI YoY'].iloc[:, 0]
-    
+    if 'SOFR' in rates_data:
+        key_metrics['SOFR'] = rates_data['SOFR']
+    if 'CPI YoY' in cpi_data:
+        key_metrics['CPI YoY'] = cpi_data['CPI YoY']
+
     if key_metrics:
         display_key_metrics(key_metrics)
-    
-    # Display charts
-    st.header("📊 Comprehensive Market Charts")
-    
-    # 1. Economic Policy Uncertainty
+
+    # --- Charts ---
+    st.header('📊 Comprehensive Market Charts')
+
     if show_policy and epu is not None:
-        st.subheader("📈 Economic Policy Uncertainty Index")
-        fig = create_plotly_chart(epu, "Economic Policy Uncertainty Index", "Index Level")
+        st.subheader('📈 Economic Policy Uncertainty Index')
+        fig = create_plotly_chart(epu.to_frame('EPU'), 'Economic Policy Uncertainty Index', 'Index Level')
         if fig:
             st.plotly_chart(fig, use_container_width=True)
-    
-    # 2. Treasury Yield Curve
+
     if show_treasury and not treasury_df.empty:
-        st.subheader("📊 U.S. Treasury Yield Curve")
-        fig = create_plotly_chart(treasury_df, "U.S. Treasury Yields (1M to 30Y)", "Yield (%)")
+        st.subheader('📊 U.S. Treasury Yield Curve')
+        fig = create_plotly_chart(treasury_df, 'U.S. Treasury Yields (1M to 30Y)', 'Yield (%)')
         if fig:
             st.plotly_chart(fig, use_container_width=True)
-    
-    # 3. Treasury Spreads
+
     if show_spreads and spreads_data:
-        st.subheader("📏 Treasury Yield Spreads")
-        for name, spread_df in spreads_data.items():
-            fig = create_plotly_chart(spread_df, f"U.S. {name}", "Spread (bps)")
+        st.subheader('📏 Treasury Yield Spreads')
+        for name, s in spreads_data.items():
+            fig = create_plotly_chart(s.to_frame(name), f'U.S. {name}', 'Spread (bps)')
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
-    
-    # 4. Credit Spreads
+
     if show_credit and not credit_df.empty:
-        st.subheader("🏦 Credit Spreads vs Treasury")
-        fig = create_plotly_chart(credit_df, "Credit Spreads (AAA, BBB, CCC)", "OAS Spread (bps)")
+        st.subheader('🏦 Credit Spreads vs Treasury')
+        fig = create_plotly_chart(credit_df, 'Credit Spreads (AAA, BBB, CCC)', 'OAS Spread (bps)')
         if fig:
             st.plotly_chart(fig, use_container_width=True)
-    
-    # 5. Short-term Rates
+
     if show_rates and rates_data:
-        st.subheader("💰 Short-term Interest Rates")
-        for name, rate_df in rates_data.items():
-            fig = create_plotly_chart(rate_df, f"{name} Rate", "Rate (%)")
+        st.subheader('💰 Short-term Interest Rates')
+        for name, s in rates_data.items():
+            fig = create_plotly_chart(s.to_frame(name), f'{name} Rate', 'Rate (%)')
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
-    
-    # 6. Overnight Repo
+
     if show_repo and repo_data is not None:
-        st.subheader("🔄 Overnight Reverse Repo Operations")
-        fig = create_plotly_chart(repo_data, "ON RRP Operations Volume", "Amount ($ Billions)")
+        st.subheader('🔄 Overnight Reverse Repo Operations')
+        fig = create_plotly_chart(repo_data.to_frame('ON RRP'), 'ON RRP Operations Volume', 'Amount')
         if fig:
             st.plotly_chart(fig, use_container_width=True)
-    
-    # 7. US Credit vs EM Markets
+
     if show_embi and em_credit_data:
-        st.subheader("🌍 US Credit Spread vs Emerging Market Performance")
-        
-        # Separate credit spreads from EM performance data
-        credit_spread_data = None
-        em_performance_data = {}
-        
-        if 'US HY Credit Spread' in em_credit_data:
-            credit_spread_data = em_credit_data['US HY Credit Spread']
-        
-        if 'EM Stocks % Change' in em_credit_data:
-            em_performance_data['EM Stocks % Change'] = em_credit_data['EM Stocks % Change']
-        if 'EM Bonds % Change' in em_credit_data:
-            em_performance_data['EM Bonds % Change'] = em_credit_data['EM Bonds % Change']
-        
-        if em_performance_data:
-            em_perf_df = pd.concat(em_performance_data, axis=1)
-            fig = create_dual_axis_chart(
-                credit_spread_data, 
-                em_perf_df, 
-                "US Credit Risk vs Emerging Market Performance",
-                "Credit Spread (bps)",
-                "EM Performance (% Change)"
-            )
+        st.subheader('🌍 US Credit Spread vs Emerging Market Performance')
+        credit_spread = em_credit_data.get('US HY Credit Spread')
+        em_perf_items = {k: v for k, v in em_credit_data.items() if 'EM' in k}
+        if em_perf_items:
+            em_perf_df = pd.concat(list(em_perf_items.values()), axis=1)
+            em_perf_df.columns = list(em_perf_items.keys())
+            fig = create_dual_axis_chart(credit_spread, em_perf_df, 'US Credit Risk vs Emerging Market Performance', 'Credit Spread (bps)', 'EM Performance (% Change)')
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
-                st.info("💡 **Chart Logic**: When US credit spreads widen (higher risk), EM assets often underperform (negative correlation)")
+                st.info('💡 Chart Logic: When US credit spreads widen, EM assets often underperform (negative correlation)')
         else:
-            # Fallback to single chart if EM data unavailable
-            if credit_spread_data is not None:
-                fig = create_plotly_chart(credit_spread_data, "US High Yield Credit Spread", "Spread (bps)")
+            if credit_spread is not None:
+                fig = create_plotly_chart(credit_spread.to_frame('US HY Credit Spread'), 'US High Yield Credit Spread', 'Spread (bps)')
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
-    
-    # 8. CPI Data
+
     if show_cpi and cpi_data:
-        st.subheader("📊 Consumer Price Index (CPI)")
-        
-        # Combine YoY data
+        st.subheader('📊 Consumer Price Index (CPI)')
         if 'CPI YoY' in cpi_data and 'Core CPI YoY' in cpi_data:
-            yoy_combined = pd.concat([
-                cpi_data['CPI YoY'].iloc[:, 0],
-                cpi_data['Core CPI YoY'].iloc[:, 0]
-            ], axis=1)
-            yoy_combined.columns = ['CPI YoY', 'Core CPI YoY']
-            fig = create_plotly_chart(yoy_combined, "CPI Year-over-Year", "YoY Change (%)")
+            yoy_df = pd.concat([cpi_data['CPI YoY'], cpi_data['Core CPI YoY']], axis=1)
+            yoy_df.columns = ['CPI YoY', 'Core CPI YoY']
+            fig = create_plotly_chart(yoy_df, 'CPI Year-over-Year', 'YoY Change (%)')
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
-        
-        # Combine MoM data
         if 'CPI MoM' in cpi_data and 'Core CPI MoM' in cpi_data:
-            mom_combined = pd.concat([
-                cpi_data['CPI MoM'].iloc[:, 0],
-                cpi_data['Core CPI MoM'].iloc[:, 0]
-            ], axis=1)
-            mom_combined.columns = ['CPI MoM', 'Core CPI MoM']
-            fig = create_plotly_chart(mom_combined, "CPI Month-over-Month", "MoM Change (%)")
+            mom_df = pd.concat([cpi_data['CPI MoM'], cpi_data['Core CPI MoM']], axis=1)
+            mom_df.columns = ['CPI MoM', 'Core CPI MoM']
+            fig = create_plotly_chart(mom_df, 'CPI Month-over-Month', 'MoM Change (%)')
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
-    
+
     # Footer
-    st.markdown("---")
-    st.markdown("**📊 Data Sources:**")
-    st.markdown("*• FRED (Federal Reserve Economic Data) • Yahoo Finance (EEM, EMB ETFs) • Policy Uncertainty*")
-    st.markdown(f"*🕐 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*")
-    st.markdown(f"*🔄 Next auto
+    st.markdown('---')
+    st.markdown('**📊 Data Sources:** FRED • Yahoo Finance (EEM, EMB) • Policy Uncertainty')
+    st.markdown(f"*🕐 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+
+
+if __name__ == '__main__':
+    main()
