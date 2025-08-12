@@ -12,7 +12,7 @@ import requests
 import json
 warnings.filterwarnings('ignore')
 
-# Page config for mobile-friendly layout
+# Page config for mobile-friendly layout with dark theme
 st.set_page_config(
     page_title="Fixed Income Monitor",
     page_icon="📊",
@@ -20,36 +20,94 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for mobile responsiveness
+# Dark mode CSS styling
 st.markdown("""
 <style>
+    /* Main dark theme */
+    .stApp {
+        background-color: #0e1117;
+        color: #ffffff;
+    }
+    
+    /* Sidebar dark theme */
+    .css-1d391kg {
+        background-color: #262730;
+    }
+    
+    /* Main content area */
     .main .block-container {
+        background-color: #0e1117;
         padding-top: 1rem;
         padding-bottom: 1rem;
         max-width: 100%;
+        color: #ffffff;
     }
+    
+    /* Charts background */
     .stPlotlyChart {
-        background-color: black;
+        background-color: #0e1117;
     }
+    
+    /* Metrics styling */
     .metric-container {
-        background-color: #f0f2f6;
+        background-color: #262730;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
+        border: 1px solid #4a4a4a;
     }
+    
     .stMetric {
-        background-color: black;
+        background-color: #262730;
         padding: 0.5rem;
         border-radius: 0.25rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        box-shadow: 0 1px 3px rgba(255,255,255,0.1);
+        color: #ffffff;
+    }
+    
+    /* Text colors */
+    .stMarkdown, .stText, h1, h2, h3, p {
+        color: #ffffff !important;
+    }
+    
+    /* Success/Error messages */
+    .stSuccess {
+        background-color: #1e4d3d;
+        color: #ffffff;
+    }
+    
+    .stError {
+        background-color: #4d1e1e;
+        color: #ffffff;
+    }
+    
+    .stWarning {
+        background-color: #4d3d1e;
+        color: #ffffff;
+    }
+    
+    .stInfo {
+        background-color: #1e3d4d;
+        color: #ffffff;
+    }
+    
+    /* Input widgets */
+    .stSelectbox, .stCheckbox, .stDateInput {
+        color: #ffffff;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #262730;
+        color: #ffffff;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Helper functions
-@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
+# Helper functions with automatic daily refresh
+@st.cache_data(ttl=86400, show_spinner=False)  # Cache for 24 hours (daily refresh)
 def fred_get(series_id, start, end):
-    """Safe fetch from FRED with caching and detailed error handling."""
+    """Safe fetch from FRED with daily caching and detailed error handling."""
     try:
         df = web.DataReader(series_id, 'fred', start, end)
         if df is not None and not df.empty:
@@ -62,49 +120,24 @@ def fred_get(series_id, start, end):
         st.error(f"❌ Failed to fetch {series_id}: {str(e)}")
         return None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_vix_data(start, end):
-    """Fetch VIX data with caching and better error handling."""
+@st.cache_data(ttl=86400, show_spinner=False)  # Daily refresh
+def get_yahoo_data(ticker, start, end, name):
+    """Fetch Yahoo Finance data with proper error handling."""
     try:
-        vix_df = yf.download("^VIX", start=start, end=end, progress=False, auto_adjust=False)
-        if vix_df is not None and not vix_df.empty:
-            vix_series = vix_df['Close'].rename('VIX')
-            st.success(f"✅ Loaded VIX: {len(vix_series)} records")
-            return vix_series
+        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
+        if data is not None and not data.empty and 'Close' in data.columns:
+            close_data = data['Close']
+            st.success(f"✅ Loaded {name} ({ticker}): {len(close_data)} records")
+            return close_data
         else:
-            st.warning("⚠️ VIX: No data returned")
+            st.warning(f"⚠️ {name} ({ticker}): No data returned")
             return None
     except Exception as e:
-        st.error(f"❌ Failed to fetch VIX: {str(e)}")
-        return None
-
-@st.cache_data(ttl=21600, show_spinner=False)  # Cache for 6 hours (less frequent updates)
-def get_cme_fed_probabilities():
-    """Fetch Fed funds rate probabilities from CME (simplified version)."""
-    try:
-        # Note: This is a placeholder since CME data requires specific API access
-        # For now, we'll create sample data structure
-        st.info("📊 CME Fed Rate Probabilities: Using sample data (API access required for live data)")
-        
-        # Sample probabilities structure
-        dates = pd.date_range(start='2024-01-01', end='2024-12-31', freq='M')
-        prob_25bp_hike = [0.2, 0.3, 0.4, 0.5, 0.3, 0.2, 0.1, 0.15, 0.25, 0.35, 0.4, 0.3]
-        prob_no_change = [0.6, 0.5, 0.4, 0.3, 0.5, 0.6, 0.7, 0.65, 0.55, 0.45, 0.4, 0.5]
-        prob_25bp_cut = [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
-        
-        df = pd.DataFrame({
-            'Prob_Hike_25bp': prob_25bp_hike,
-            'Prob_No_Change': prob_no_change,
-            'Prob_Cut_25bp': prob_25bp_cut
-        }, index=dates)
-        
-        return df
-    except Exception as e:
-        st.error(f"❌ Failed to fetch CME Fed probabilities: {str(e)}")
+        st.error(f"❌ Failed to fetch {name} ({ticker}): {str(e)}")
         return None
 
 def create_plotly_chart(df, title, ylabel='Value'):
-    """Create mobile-friendly Plotly chart with better error handling."""
+    """Create mobile-friendly Plotly chart with dark theme."""
     if df is None:
         st.warning(f"No data available for {title}")
         return None
@@ -120,8 +153,8 @@ def create_plotly_chart(df, title, ylabel='Value'):
         if isinstance(df, pd.Series):
             df = df.to_frame()
         
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
-                  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        colors = ['#00d4ff', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', 
+                  '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3']
         
         for i, col in enumerate(df.columns):
             # Skip NaN values
@@ -132,7 +165,7 @@ def create_plotly_chart(df, title, ylabel='Value'):
                     y=clean_data.values,
                     mode='lines',
                     name=str(col),
-                    line=dict(color=colors[i % len(colors)], width=2),
+                    line=dict(color=colors[i % len(colors)], width=2.5),
                     hovertemplate=f'<b>{col}</b><br>Date: %{{x}}<br>Value: %{{y:.3f}}<extra></extra>'
                 ))
                 
@@ -149,24 +182,45 @@ def create_plotly_chart(df, title, ylabel='Value'):
                         arrowsize=1,
                         arrowwidth=1,
                         arrowcolor=colors[i % len(colors)],
-                        font=dict(size=10, color=colors[i % len(colors)])
+                        font=dict(size=11, color=colors[i % len(colors)]),
+                        bgcolor="rgba(0,0,0,0.8)",
+                        bordercolor=colors[i % len(colors)],
+                        borderwidth=1
                     )
         
         fig.update_layout(
-            title=dict(text=title, font=dict(size=16)),
+            title=dict(text=title, font=dict(size=18, color='white')),
             xaxis_title="Date",
             yaxis_title=ylabel,
             hovermode='x unified',
             showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=40, r=40, t=60, b=40),
-            height=400,
-            plot_bgcolor='black',
-            paper_bgcolor='black'
+            legend=dict(
+                orientation="h", 
+                yanchor="bottom", 
+                y=1.02, 
+                xanchor="right", 
+                x=1,
+                font=dict(color='white')
+            ),
+            margin=dict(l=50, r=50, t=70, b=50),
+            height=450,
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117',
+            font=dict(color='white'),
+            xaxis=dict(
+                gridcolor='#2d2d2d',
+                color='white',
+                tickfont=dict(color='white')
+            ),
+            yaxis=dict(
+                gridcolor='#2d2d2d',
+                color='white',
+                tickfont=dict(color='white')
+            )
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#2d2d2d')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2d2d2d')
         
         return fig
     except Exception as e:
@@ -174,17 +228,15 @@ def create_plotly_chart(df, title, ylabel='Value'):
         return None
 
 def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylabel):
-    """Create a dual-axis chart for comparing different scales."""
+    """Create a dual-axis chart for comparing different scales with dark theme."""
     if left_data is None and right_data is None:
         return None
     
     try:
-        from plotly.subplots import make_subplots
-        
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        colors_left = ['#1f77b4', '#ff7f0e']
-        colors_right = ['#2ca02c', '#d62728']
+        colors_left = ['#00d4ff', '#ff6b6b']
+        colors_right = ['#4ecdc4', '#feca57']
         
         # Add left axis data (Credit Spreads)
         if left_data is not None:
@@ -200,7 +252,7 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
                             y=clean_data.values,
                             mode='lines',
                             name=str(col),
-                            line=dict(color=colors_left[i % len(colors_left)], width=2),
+                            line=dict(color=colors_left[i % len(colors_left)], width=2.5),
                             yaxis='y',
                         ),
                         secondary_y=False
@@ -220,82 +272,63 @@ def create_dual_axis_chart(left_data, right_data, title, left_ylabel, right_ylab
                             y=clean_data.values,
                             mode='lines',
                             name=str(col),
-                            line=dict(color=colors_right[i % len(colors_right)], width=2),
+                            line=dict(color=colors_right[i % len(colors_right)], width=2.5),
                             yaxis='y2',
                         ),
                         secondary_y=True
                     )
         
-        # Update layout
+        # Update layout with dark theme
         fig.update_layout(
-            title=dict(text=title, font=dict(size=16)),
+            title=dict(text=title, font=dict(size=18, color='white')),
             xaxis_title="Date",
             hovermode='x unified',
             showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=40, r=40, t=60, b=40),
-            height=400,
-            plot_bgcolor='black',
-            paper_bgcolor='black'
+            legend=dict(
+                orientation="h", 
+                yanchor="bottom", 
+                y=1.02, 
+                xanchor="right", 
+                x=1,
+                font=dict(color='white')
+            ),
+            margin=dict(l=50, r=50, t=70, b=50),
+            height=450,
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117',
+            font=dict(color='white')
         )
         
         # Set y-axes titles
-        fig.update_yaxes(title_text=left_ylabel, secondary_y=False)
-        fig.update_yaxes(title_text=right_ylabel, secondary_y=True)
+        fig.update_yaxes(
+            title_text=left_ylabel, 
+            secondary_y=False,
+            gridcolor='#2d2d2d',
+            color='white',
+            tickfont=dict(color='white')
+        )
+        fig.update_yaxes(
+            title_text=right_ylabel, 
+            secondary_y=True,
+            color='white',
+            tickfont=dict(color='white')
+        )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', secondary_y=False)
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor='#2d2d2d',
+            color='white',
+            tickfont=dict(color='white')
+        )
         
         return fig
     except Exception as e:
         st.error(f"Error creating dual-axis chart: {str(e)}")
         return None
-    """Create stacked area chart for Fed rate probabilities."""
-    if df is None or df.empty:
-        return None
-    
-    try:
-        fig = go.Figure()
-        
-        # Colors for different probability categories
-        colors = ['#ff6b6b', '#4ecdc4', '#45b7d1']
-        
-        for i, col in enumerate(df.columns):
-            clean_data = df[col].dropna()
-            if len(clean_data) > 0:
-                fig.add_trace(go.Scatter(
-                    x=clean_data.index,
-                    y=clean_data.values,
-                    mode='lines',
-                    name=col.replace('_', ' ').replace('Prob ', ''),
-                    fill='tonexty' if i > 0 else 'tozeroy',
-                    line=dict(color=colors[i % len(colors)], width=1),
-                    hovertemplate=f'<b>{col}</b><br>Date: %{{x}}<br>Probability: %{{y:.1%}}<extra></extra>'
-                ))
-        
-        fig.update_layout(
-            title=dict(text=title, font=dict(size=16)),
-            xaxis_title="Date",
-            yaxis_title="Probability",
-            hovermode='x unified',
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=40, r=40, t=60, b=40),
-            height=400,
-            plot_bgcolor='black',
-            paper_bgcolor='black'
-        )
-        
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray', tickformat='.0%')
-        
-        return fig
-    except Exception as e:
-        st.error(f"Error creating probability chart: {str(e)}")
-        return None
 
 def display_key_metrics(data_dict):
-    """Display key metrics in a mobile-friendly format."""
+    """Display key metrics in a mobile-friendly dark format."""
     if not data_dict:
         st.warning("No key metrics available")
         return
@@ -357,20 +390,22 @@ def display_key_metrics(data_dict):
 # Main app
 def main():
     st.title("📈 Comprehensive Fixed Income Monitor")
-    st.markdown("*Mobile-optimized market monitoring dashboard*")
+    st.markdown("*Mobile-optimized dark theme market monitoring dashboard*")
+    
+    # Fixed date range: 2019-01-01 to latest
+    start = datetime(2019, 1, 1)
+    end = datetime.now()
+    
+    # Display date range info
+    st.info(f"📅 **Data Range**: {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')} (Auto-updated daily)")
     
     # Sidebar for settings
     with st.sidebar:
         st.header("⚙️ Settings")
-        
-        # Date range selector
-        default_start = datetime(2022, 1, 1)
-        start_date = st.date_input("Start Date", default_start, max_value=datetime.now())
-        end_date = st.date_input("End Date", datetime.now())
-        
-        # Convert to datetime
-        start = datetime.combine(start_date, datetime.min.time())
-        end = datetime.combine(end_date, datetime.min.time())
+        st.write(f"📅 **Fixed Date Range**")
+        st.write(f"Start: {start.strftime('%Y-%m-%d')}")
+        st.write(f"End: {end.strftime('%Y-%m-%d')}")
+        st.write("🔄 **Auto-refresh**: Daily")
         
         # Chart selection
         st.header("📊 Charts to Display")
@@ -379,13 +414,12 @@ def main():
         show_spreads = st.checkbox("Treasury Spreads", True) 
         show_credit = st.checkbox("Credit Spreads", True)
         show_rates = st.checkbox("Short Rates (SOFR/EFFR)", True)
-        show_fed_prob = st.checkbox("Fed Rate Probabilities", True)
         show_repo = st.checkbox("Overnight Repo Rate", True)
         show_embi = st.checkbox("US Credit vs EM Stocks & Bonds", True)
         show_cpi = st.checkbox("CPI Inflation (YoY & MoM)", True)
         
-        # Refresh button
-        if st.button("🔄 Refresh Data"):
+        # Manual refresh button
+        if st.button("🔄 Force Refresh All Data"):
             st.cache_data.clear()
             st.rerun()
     
@@ -422,7 +456,7 @@ def main():
             if treasury_parts:
                 treasury_df = pd.concat(treasury_parts, axis=1).sort_index()
         
-        # 3) Treasury spreads - Fixed labels
+        # 3) Treasury spreads
         spreads_data = {}
         if show_spreads and not treasury_df.empty:
             st.write("📏 Computing Treasury Spreads...")
@@ -439,7 +473,7 @@ def main():
             except Exception as e:
                 st.error(f"❌ Error computing spreads: {str(e)}")
         
-        # 4) Credit spreads - AAA, BBB, CCC vs Treasury
+        # 4) Credit spreads
         credit_df = pd.DataFrame()
         if show_credit:
             st.write("🏦 Fetching Credit Spreads...")
@@ -456,7 +490,7 @@ def main():
             if credit_series:
                 credit_df = pd.concat(credit_series, axis=1)
         
-        # 5) Short rates - SOFR and Effective Fed Funds
+        # 5) Short rates
         rates_data = {}
         if show_rates:
             st.write("💰 Fetching Short-term Rates...")
@@ -467,55 +501,41 @@ def main():
             if effr is not None:
                 rates_data['EFFR'] = effr
         
-        # 6) Fed Rate Probabilities
-        fed_prob_data = None
-        if show_fed_prob:
-            st.write("🎯 Fetching Fed Rate Probabilities...")
-            fed_prob_data = get_cme_fed_probabilities()
-        
-        # 7) Overnight Repo Rate
+        # 6) Overnight Repo Rate
         repo_data = None
         if show_repo:
             st.write("🔄 Fetching Overnight Repo Rate...")
-            repo_data = fred_get('RRPONTSYD', start, end)  # Overnight Reverse Repo Rate
+            repo_data = fred_get('RRPONTSYD', start, end)
         
-        # 8) US Credit Spread vs EM Markets
+        # 7) US Credit Spread vs EM Markets - Fixed implementation
         em_credit_data = {}
         if show_embi:
             st.write("🌍 Fetching US Credit vs EM Market Data...")
+            
             # US High Yield Credit Spread
-            us_hy_spread = fred_get('BAMLH0A0HYM2', start, end)  # US High Yield Master II OAS
-            # EM Stock Index (using MSCI EM as proxy via Yahoo Finance)
-            try:
-                em_stocks = yf.download("EEM", start=start, end=end, progress=False, auto_adjust=False)
-                if em_stocks is not None and not em_stocks.empty:
-                    em_stocks_close = em_stocks['Close'].rename('EM Stocks (EEM)')
-                    # Normalize to percentage change from start for comparison
-                    em_stocks_norm = ((em_stocks_close / em_stocks_close.iloc[0]) - 1) * 100
-                    em_credit_data['EM Stocks % Change'] = em_stocks_norm
-                    st.success("✅ Loaded EM Stocks (EEM)")
-            except Exception as e:
-                st.warning(f"⚠️ Failed to fetch EM stocks: {str(e)}")
-            
-            # EM Bonds (using EMB ETF as proxy)
-            try:
-                em_bonds = yf.download("EMB", start=start, end=end, progress=False, auto_adjust=False)
-                if em_bonds is not None and not em_bonds.empty:
-                    em_bonds_close = em_bonds['Close'].rename('EM Bonds (EMB)')
-                    # Normalize to percentage change from start
-                    em_bonds_norm = ((em_bonds_close / em_bonds_close.iloc[0]) - 1) * 100
-                    em_credit_data['EM Bonds % Change'] = em_bonds_norm
-                    st.success("✅ Loaded EM Bonds (EMB)")
-            except Exception as e:
-                st.warning(f"⚠️ Failed to fetch EM bonds: {str(e)}")
-            
+            us_hy_spread = fred_get('BAMLH0A0HYM2', start, end)
             if us_hy_spread is not None:
                 em_credit_data['US HY Credit Spread'] = us_hy_spread
+            
+            # EM Stock Index (EEM ETF)
+            em_stocks_data = get_yahoo_data("EEM", start, end, "EM Stocks")
+            if em_stocks_data is not None:
+                # Normalize to percentage change from start
+                em_stocks_norm = ((em_stocks_data / em_stocks_data.iloc[0]) - 1) * 100
+                em_credit_data['EM Stocks % Change'] = em_stocks_norm
+            
+            # EM Bonds (EMB ETF)
+            em_bonds_data = get_yahoo_data("EMB", start, end, "EM Bonds")
+            if em_bonds_data is not None:
+                # Normalize to percentage change from start
+                em_bonds_norm = ((em_bonds_data / em_bonds_data.iloc[0]) - 1) * 100
+                em_credit_data['EM Bonds % Change'] = em_bonds_norm
         
-        # 9) CPI Data - YoY and MoM
+        # 8) CPI Data
         cpi_data = {}
         if show_cpi:
             st.write("📊 Fetching CPI Data...")
+            
             # CPI All Urban Consumers
             cpi_all = fred_get('CPIAUCSL', start, end)
             # Core CPI (less food and energy)
@@ -540,7 +560,6 @@ def main():
     # Display key metrics
     key_metrics = {}
     
-    # Add various metrics to the dashboard
     if epu is not None and not epu.empty:
         key_metrics['Policy Uncertainty'] = epu.iloc[:, 0]
     if not treasury_df.empty and '10Y' in treasury_df.columns:
@@ -597,21 +616,14 @@ def main():
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
     
-    # 6. Fed Rate Probabilities
-    if show_fed_prob and fed_prob_data is not None:
-        st.subheader("🎯 Fed Funds Rate Probability (Next Meeting)")
-        fig = create_stacked_probability_chart(fed_prob_data, "Fed Rate Change Probabilities")
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # 7. Overnight Repo
+    # 6. Overnight Repo
     if show_repo and repo_data is not None:
         st.subheader("🔄 Overnight Reverse Repo Operations")
         fig = create_plotly_chart(repo_data, "ON RRP Operations Volume", "Amount ($ Billions)")
         if fig:
             st.plotly_chart(fig, use_container_width=True)
     
-    # 8. US Credit vs EM Markets
+    # 7. US Credit vs EM Markets
     if show_embi and em_credit_data:
         st.subheader("🌍 US Credit Spread vs Emerging Market Performance")
         
@@ -646,7 +658,7 @@ def main():
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
     
-    # 9. CPI Data
+    # 8. CPI Data
     if show_cpi and cpi_data:
         st.subheader("📊 Consumer Price Index (CPI)")
         
@@ -675,16 +687,6 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown("**📊 Data Sources:**")
-    st.markdown("*• FRED (Federal Reserve Economic Data) • Yahoo Finance (EEM, EMB ETFs) • CME Group • Policy Uncertainty*")
-    st.markdown(f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*")
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error("🚨 Critical Error in Main App")
-        st.write("Error details:", str(e))
-        st.write("Full traceback:")
-        st.code(traceback.format_exc())
-
-
+    st.markdown("*• FRED (Federal Reserve Economic Data) • Yahoo Finance (EEM, EMB ETFs) • Policy Uncertainty*")
+    st.markdown(f"*🕐 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC*")
+    st.markdown(f"*🔄 Next auto
